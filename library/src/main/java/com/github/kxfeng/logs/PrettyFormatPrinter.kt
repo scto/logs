@@ -59,7 +59,7 @@ class PrettyFormatPrinter(
         for (it in items) {
             if (it == null) continue
             if (sb.isNotEmpty()) {
-                sb.append("\n")
+                sb.append(Util.LINE_SEPARATOR)
             }
             sb.append(it)
         }
@@ -68,19 +68,19 @@ class PrettyFormatPrinter(
 
     private fun mergePartWithBorder(vararg items: String?): String {
         val sb = StringBuilder()
-        sb.append(TOP_LEFT_CORNER).append(DOUBLE_DIVIDER).append("\n")
+        sb.append(TOP_LEFT_CORNER).append(DOUBLE_DIVIDER).append(Util.LINE_SEPARATOR)
         var partCount = 0
         for (it in items) {
             if (it == null) continue
 
             if (partCount > 0) {
-                sb.append(MIDDLE_CORNER).append(SINGLE_DIVIDER).append("\n")
+                sb.append(MIDDLE_CORNER).append(SINGLE_DIVIDER).append(Util.LINE_SEPARATOR)
             }
 
-            val lines = it.split("\r?\n".toRegex())
+            val lines = it.split(Util.LINE_REGEX)
 
             for (ln in lines) {
-                sb.append(HORIZONTAL_LINE).append(" ").append(ln).append("\n")
+                sb.append(HORIZONTAL_LINE).append(" ").append(ln).append(Util.LINE_SEPARATOR)
             }
 
             partCount++
@@ -102,7 +102,7 @@ class PrettyFormatPrinter(
             val offset = StringBuilder()
             for (i in stacks.size - 1 downTo 0) {
                 if (!result.isEmpty())
-                    result.append("\n").append(offset)
+                    result.append(Util.LINE_SEPARATOR).append(offset)
                 result.append(stacks[i].toString())
                 offset.append("  ")
             }
