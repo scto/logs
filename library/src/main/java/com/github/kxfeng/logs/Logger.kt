@@ -170,7 +170,7 @@ class Logger internal constructor() {
             if (!printer.isLoggable(level, tag)) continue
 
             if (finalArgs == null) {
-                finalArgs = args?.let { getFinalArgs(it) }
+                finalArgs = if (args == null || args.isEmpty()) null else getFinalArgs(args)
                 finalMessage = if (message != null && finalArgs != null) message.format(*finalArgs) else message
             }
 
