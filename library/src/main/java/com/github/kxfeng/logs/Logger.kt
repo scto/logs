@@ -192,6 +192,7 @@ class Logger internal constructor() {
 
                 if (supplierResult == null) {
                     supplierResult = Array(args.size) { null }
+                    System.arraycopy(args, 0, supplierResult!!, 0, index)
                 }
 
             } else {
