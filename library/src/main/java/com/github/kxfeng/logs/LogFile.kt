@@ -6,21 +6,34 @@ import java.nio.channels.FileLock
 import java.nio.channels.OverlappingFileLockException
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.locks.ReadWriteLock
-import java.util.concurrent.locks.ReentrantReadWriteLock
+import java.util.concurrent.locks.Lock
+import java.util.concurrent.locks.ReentrantLock
 
 /**
- * LogFile is a multi-thread and multi-process safe class for writing content to log.
+ * LogFile is a multi-thread and multi-process safe class for writing content to log. It's thread and process safe in
+ * log path level, not just in instance level. For example, you can create one instance to record log and another
+ * instance to archive instance:
+ *
+ * ```
+ * Thread1 :
+ * val writeInstance = LogFile("/tmp/logs/", "log", 1024*1024)
+ * writeInstance.write("xxx")
+ *
+ * Thread2 :
+ * val archiveInstance = LogFile("/tmp/logs/", "log", Long.MAX_VALUE)
+ * val archiveFiles = archiveInstance.archive()
+ * archiveInstance.close()
+ * ```
  *
  * @param directory The directory (absolute path) to save log file
  * @param name The log name
- * @param limit The maximum number of bytes to write to any one file
+ * @param limit The maximum number of bytes to write to one file
  */
 class LogFile(
     private val directory: String,
     private val name: String,
     private val limit: Long
-) {
+) : AutoCloseable {
     private val lockFilePath: String = File(directory, getFileName(EXT_LOCK)).path
     @Volatile
     private var lockFileChannel: FileChannel? = null
@@ -37,7 +50,7 @@ class LogFile(
     companion object {
         private const val EXT_LOCK = ".lock"
         private const val EXT_LOG = ".log"
-        private const val EXT_ARCHIVE = ".archive"
+        private const val EXT_ARCHIVE = ".bak"
         private val INDEX_REGEX = Regex("\\d|[1-9]\\d")
 
         private val FILE_SORT_COMPARATOR = Comparator<File> { o1, o2 ->
@@ -50,21 +63,7 @@ class LogFile(
             return@Comparator o1.name.compareTo(o2.name)
         }
 
-        // Map lock file path to the count of threads which are writing to log concurrently
-        private val sharedRunningMap: MutableMap<String, Int?> = ConcurrentHashMap()
-        // Map lock file path to the shared FileLock of that lock file
-        private val sharedFileLockMap: MutableMap<String, FileLock?> = ConcurrentHashMap()
-        // Map lock file path to the ReadWriteLock which is used to synchronize thread
-        private val readWriteLockMap: MutableMap<String, ReadWriteLock?> = HashMap()
-
-        /**
-         * Archive log files based on [directory] and [name]
-         * @see [LogFile.archive]
-         */
-        @JvmStatic
-        fun archive(directory: String, name: String): Array<File> {
-            return LogFile(directory, name, Long.MAX_VALUE).archive()
-        }
+        private val THREAD_LOCK_MAP: ConcurrentHashMap<String, Lock?> = ConcurrentHashMap()
     }
 
     /**
@@ -73,25 +72,15 @@ class LogFile(
      * @throws IOException Some I/O error occurs
      */
     fun write(content: String) {
-        // Lock on read lock, prevent doing archive operation concurrently
-        val readLock = getReadWriteLock(lockFilePath).readLock()
-        readLock.lock()
+        // Lock to prevent doing operation concurrently in different thread of current process
+        val threadLock = getThreadLock(lockFilePath)
+        threadLock.lock()
 
         var exception: Throwable? = null
         var fileLock: FileLock? = null
         try {
-            // Lock on lockFile path related object, prevent other threads running this block concurrently
-            synchronized(readLock) {
-                val running: Int = sharedRunningMap[lockFilePath] ?: 0
-                if (running == 0) {
-                    // Request shared file lock to prevent doing archive operation concurrently in multi-process
-                    fileLock = getFileLock(true)
-                    sharedFileLockMap[lockFilePath] = fileLock
-                } else {
-                    fileLock = sharedFileLockMap[lockFilePath]!!
-                }
-                sharedRunningMap[lockFilePath] = running + 1
-            }
+            // Request exclusive file lock to prevent doing operation concurrently in multi-process
+            fileLock = lockOnFile()
 
             val archiveRange = findFileIndexRange(true)
             val logRange = findFileIndexRange(false)
@@ -104,50 +93,34 @@ class LogFile(
                 headFile = File(directory, getFileName(EXT_LOG, headIndex))
             }
 
-            var tmpOpenIndex: Int? = null
-            var tmpOpenStream: OutputStream? = null
+            var tmpOpenIndex: Int? = openFileIndex
+            var tmpOpenStream: OutputStream? = openFileStream
 
-            synchronized(this) {
-                tmpOpenIndex = openFileIndex
-                tmpOpenStream = openFileStream
-            }
             if (tmpOpenIndex != headIndex) {
                 tmpOpenIndex = headIndex
                 tmpOpenStream = BufferedOutputStream(FileOutputStream(headFile, true))
             }
 
             tmpOpenStream!!.write(content.toByteArray())
-            tmpOpenStream!!.flush()
+            tmpOpenStream.flush()
 
-            synchronized(this) {
-                if (openFileStream != tmpOpenStream) {
-                    try {
-                        openFileStream?.close()
-                    } catch (ex: IOException) {
-                        // ignore
-                        ex.printStackTrace()
-                    }
-                    openFileIndex = tmpOpenIndex
-                    openFileStream = tmpOpenStream
+            if (openFileStream != tmpOpenStream) {
+                try {
+                    openFileStream?.close()
+                } catch (ex: IOException) {
+                    // ignore
+                    ex.printStackTrace()
                 }
+                openFileIndex = tmpOpenIndex
+                openFileStream = tmpOpenStream
             }
         } catch (ex: Throwable) {
             exception = ex
             throw ex
         } finally {
-            var newCloseError: Throwable? = null
-
-            synchronized(readLock) {
-                val running: Int = sharedRunningMap[lockFilePath]!!
-                sharedRunningMap[lockFilePath] = running - 1
-                if (running == 1) {
-                    newCloseError = fileLock.catchClose(exception)
-                    sharedFileLockMap.remove(lockFilePath)
-                }
-            }
-
-            readLock.unlock()
-            if (newCloseError != null) throw newCloseError!!
+            val newCloseError: Throwable? = fileLock.catchClose(exception)
+            threadLock.unlock()
+            if (newCloseError != null) throw newCloseError
         }
     }
 
@@ -159,15 +132,15 @@ class LogFile(
      * @throws IOException Some I/O error occurs
      */
     fun archive(): Array<File> {
-        // Lock on write lock to prevent doing write or archive operation concurrently
-        val writeLock = getReadWriteLock(lockFilePath).writeLock()
-        writeLock.lock()
+        // Lock to prevent doing operation concurrently in different thread of current process
+        val threadLock = getThreadLock(lockFilePath)
+        threadLock.lock()
 
         var exception: Throwable? = null
         var fileLock: FileLock? = null
         try {
-            // Request exclusive file lock to prevent doing write or archive operation concurrently in multi-process
-            fileLock = getFileLock(false)
+            // Request exclusive file lock to prevent doing operation concurrently in multi-process
+            fileLock = lockOnFile()
 
             val logFiles = File(directory).listFiles(logFileFilter)
                 ?: throw IOException("Unable to list files: $directory")
@@ -193,49 +166,62 @@ class LogFile(
             throw ex
         } finally {
             val newCloseError = fileLock.catchClose(exception)
-            writeLock.unlock()
+            threadLock.unlock()
             if (newCloseError != null) throw newCloseError
         }
     }
 
     /**
-     * Release resources
+     * Release resources. If the instance is alive as long as the process, it's safe not to close this manually,
+     * just let the process to release resource. But if you create multiple short live instance, you should close them.
      *
      * @throws IOException Some I/O error occurs
      */
-    fun release() {
-        openFileStream?.close()
+    override fun close() {
+        val threadLock = getThreadLock(lockFilePath)
+        threadLock.lock()
+
+        var newError = openFileStream.catchClose(null)
+        newError = lockFileChannel.catchClose(newError)
+
+        openFileIndex = null
+        openFileStream = null
+        lockFileChannel = null
+
+        threadLock.unlock()
+        if (newError != null) throw newError
     }
 
     /**
+     * Lock on file and save the open file channel. This method should be synchronized externally.
+     *
      * @throws FileNotFoundException If lock file create failed
      * @throws OverlappingFileLockException See [FileChannel.lock]
      * @throws IOException If some other I/O error occurs
      */
-    private fun getFileLock(shared: Boolean): FileLock {
+    private fun lockOnFile(): FileLock {
         if (lockFileChannel == null) {
-            synchronized(this) {
-                if (lockFileChannel == null) {
-                    val file = File(lockFilePath)
-                    if (!file.exists()) {
-                        // ignore result, let RandomAccessFile constructor throw exception if fail
-                        file.parentFile.mkdirs()
-                    }
-                    lockFileChannel = RandomAccessFile(file, "rw").channel
-                }
+            val file = File(lockFilePath)
+            if (!file.exists()) {
+                // ignore result, let RandomAccessFile constructor throw exception if fail
+                file.parentFile.mkdirs()
             }
+            lockFileChannel = RandomAccessFile(file, "rw").channel
         }
-        return lockFileChannel!!.lock(0, Long.MAX_VALUE, shared)
+        return lockFileChannel!!.lock(0, Long.MAX_VALUE, false)
     }
 
-    private fun getReadWriteLock(key: String): ReadWriteLock {
-        synchronized(readWriteLockMap) {
-            var lock = readWriteLockMap[key]
+    private fun getThreadLock(key: String): Lock {
+        var lock = THREAD_LOCK_MAP[key]
+        if (lock != null) return lock
+
+        synchronized(THREAD_LOCK_MAP) {
+            lock = THREAD_LOCK_MAP[key]
             if (lock == null) {
-                lock = ReentrantReadWriteLock()
-                readWriteLockMap[key] = lock
+                lock = ReentrantLock()
+                THREAD_LOCK_MAP[key] = lock
             }
-            return lock
+            return lock!!
         }
     }
 
