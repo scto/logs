@@ -162,16 +162,18 @@ class Logger internal constructor() {
 
         val printers = printerArray
 
-        var finalArgs: Array<out Any?>? = null
         var finalMessage: String? = null
+        var finalMsgDone = false
+
         var methodStacks: Array<StackTraceElement>? = null
 
         for (printer in printers) {
             if (!printer.isLoggable(level, tag)) continue
 
-            if (finalArgs == null) {
-                finalArgs = if (args == null || args.isEmpty()) null else getFinalArgs(args)
+            if (!finalMsgDone) {
+                val finalArgs = if (args == null || args.isEmpty()) null else getFinalArgs(args)
                 finalMessage = if (message != null && finalArgs != null) message.format(*finalArgs) else message
+                finalMsgDone = true
             }
 
             if (methodCount != 0 && methodStacks == null) {
