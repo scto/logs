@@ -11,35 +11,42 @@ import java.util.concurrent.locks.ReentrantLock
 
 /**
  * LogFile is a multi-thread and multi-process safe class for writing content to log. It's thread and process safe in
- * log path level, not just in instance level. For example, you can create one instance to record log and another
- * instance to archive instance:
+ * log path level, not just in instance level.
  *
+ * For example, you can create one instance to record log and another
+ * instance to archive log:
  * ```
  * Thread1 :
- * val writeInstance = LogFile("/tmp/logs/", "log", 1024*1024)
+ * val writeInstance = LogFile("/tmp/logs/", "log", 1024*1024, 5)
  * writeInstance.write("xxx")
  *
  * Thread2 :
- * val archiveInstance = LogFile("/tmp/logs/", "log", Long.MAX_VALUE)
+ * val archiveInstance = LogFile("/tmp/logs/", "log", 1024*1024, 5)
  * val archiveFiles = archiveInstance.archive()
  * archiveInstance.close()
  * ```
  *
  * @param directory The directory (absolute path) to save log file
  * @param name The log name
- * @param limit The maximum number of bytes to write to one file
+ * @param maxSize The maximum number of bytes to write to one file.
+ *                 If this value is not greater than zero, file size will not be limited.
+ * @param maxCount The maximum log file maxCount. If count of log files reach this limit, oldest log file will be deleted.
  */
 class LogFile(
     private val directory: String,
     private val name: String,
-    private val limit: Long
+    private var maxSize: Long,
+    private val maxCount: Int
 ) : AutoCloseable {
+
+    init {
+        if (maxSize <= 0) maxSize = Long.MAX_VALUE
+        if (maxCount <= 0) throw IllegalArgumentException("maxCount should be greater than 0")
+    }
+
     private val lockFilePath: String = File(directory, getFileName(EXT_LOCK)).path
     @Volatile
     private var lockFileChannel: FileChannel? = null
-
-    private val logFileFilter: FileFilter = LogFileFilter(getFileName(EXT_LOG))
-    private val archiveFileFilter: FileFilter = LogFileFilter(getFileName(EXT_ARCHIVE))
 
     // Saved open file info to prevent open/close stream every write operation
     @Volatile
@@ -51,7 +58,8 @@ class LogFile(
         private const val EXT_LOCK = ".lock"
         private const val EXT_LOG = ".log"
         private const val EXT_ARCHIVE = ".bak"
-        private val INDEX_REGEX = Regex("\\d|[1-9]\\d")
+
+        private val THREAD_LOCK_MAP: ConcurrentHashMap<String, Lock?> = ConcurrentHashMap()
 
         private val FILE_SORT_COMPARATOR = Comparator<File> { o1, o2 ->
             if (o1 == null || o2 == null) {
@@ -63,7 +71,25 @@ class LogFile(
             return@Comparator o1.name.compareTo(o2.name)
         }
 
-        private val THREAD_LOCK_MAP: ConcurrentHashMap<String, Lock?> = ConcurrentHashMap()
+        // Log or archive file name is in this format: xxx.bak1, xxx.log2, ...
+        private fun isValidFileName(fileName: String, baseName: String): Boolean {
+            if (!fileName.startsWith(baseName)) return false
+            val endStr = fileName.substring(baseName.length)
+
+            when (endStr.length) {
+                0 -> {
+                    return false
+                }
+                else -> {
+                    for (i in 0 until endStr.length) {
+                        val ch = endStr[i]
+                        if (ch < '0' || ch > '9') return false
+                        if (i == 0 && ch == '0') return false
+                    }
+                    return true
+                }
+            }
+        }
     }
 
     /**
@@ -82,37 +108,43 @@ class LogFile(
             // Request exclusive file lock to prevent doing operation concurrently in multi-process
             fileLock = lockOnFile()
 
-            val archiveRange = findFileIndexRange(true)
-            val logRange = findFileIndexRange(false)
+            val fileNameList = File(directory).list() ?: throw IOException("Unable to list files: $directory")
 
-            var headIndex = Math.max(0, Math.max(logRange.second, archiveRange.second + 1))
+            val archiveRange = findFileIndexRange(fileNameList, getFileName(EXT_ARCHIVE))
+            val logRange = findFileIndexRange(fileNameList, getFileName(EXT_LOG))
+
+            var headIndex = Math.max(1, Math.max(logRange.second, archiveRange.second + 1))
             var headFile = File(directory, getFileName(EXT_LOG, headIndex))
 
-            if (headFile.length() > limit) {
+            if (headFile.length() > maxSize) {
                 headIndex++
+                headFile = File(directory, getFileName(EXT_LOG, headIndex))
+            }
+            if (headIndex > maxCount) {
+                openFileStream.catchClose(null)?.printStackTrace()  // ignore error
+                openFileStream = null
+                openFileIndex = null
+
+                rotate()
+                headIndex = maxCount
                 headFile = File(directory, getFileName(EXT_LOG, headIndex))
             }
 
             var tmpOpenIndex: Int? = openFileIndex
             var tmpOpenStream: OutputStream? = openFileStream
 
-            if (tmpOpenIndex != headIndex) {
+            if (tmpOpenIndex != headIndex || tmpOpenStream == null) {
                 tmpOpenIndex = headIndex
                 tmpOpenStream = BufferedOutputStream(FileOutputStream(headFile, true))
             }
 
-            tmpOpenStream!!.write(content.toByteArray())
+            tmpOpenStream.write(content.toByteArray())
             tmpOpenStream.flush()
 
             if (openFileStream != tmpOpenStream) {
-                try {
-                    openFileStream?.close()
-                } catch (ex: IOException) {
-                    // ignore
-                    ex.printStackTrace()
-                }
-                openFileIndex = tmpOpenIndex
+                openFileStream.catchClose(null)?.printStackTrace()  // ignore error
                 openFileStream = tmpOpenStream
+                openFileIndex = tmpOpenIndex
             }
         } catch (ex: Throwable) {
             exception = ex
@@ -142,20 +174,27 @@ class LogFile(
             // Request exclusive file lock to prevent doing operation concurrently in multi-process
             fileLock = lockOnFile()
 
-            val logFiles = File(directory).listFiles(logFileFilter)
+            openFileStream.catchClose(null)?.printStackTrace()  // ignore error
+            openFileStream = null
+            openFileIndex = null
+
+            val logFiles = File(directory).listFiles(LogFileFilter(getFileName(EXT_LOG), true))
                 ?: throw IOException("Unable to list files: $directory")
 
             for (file in logFiles) {
                 // FileFilter ensure the file name is valid
-                val index = getFileIndex(file.name, false)
-                val result = file.renameTo(File(directory, getFileName(EXT_ARCHIVE, index)))
+                val index = getFileIndex(file.name, getFileName(EXT_LOG))
+
+                val toFile = File(directory, getFileName(EXT_ARCHIVE, index))
+                toFile.delete()
+                val result = file.renameTo(toFile)
 
                 if (!result) {
                     throw IOException("Rename to archive file failed:${file.name}")
                 }
             }
 
-            val archiveFiles = File(directory).listFiles(archiveFileFilter)
+            val archiveFiles = File(directory).listFiles(LogFileFilter(getFileName(EXT_ARCHIVE), true))
                 ?: throw IOException("Unable to list files: $directory")
 
             Arrays.sort(archiveFiles, FILE_SORT_COMPARATOR)
@@ -172,8 +211,35 @@ class LogFile(
     }
 
     /**
-     * Release resources. If the instance is alive as long as the process, it's safe not to close this manually,
-     * just let the process to release resource. But if you create multiple short live instance, you should close them.
+     * Rotate log and archive files to prevent over reach the [maxCount] limit
+     */
+    private fun rotate() {
+        for (ext in arrayOf(EXT_LOG, EXT_ARCHIVE)) {
+            if (maxCount == 1) {
+                File(directory, getFileName(ext, 1)).delete()
+                continue
+            }
+
+            var preFile = File(directory, getFileName(ext, 1))
+            for (i in 2..maxCount) {
+                val newFile = File(directory, getFileName(ext, i))
+
+                if (newFile.exists()) {
+                    if (preFile.exists()) {
+                        preFile.delete()
+                    }
+                    newFile.renameTo(preFile)
+                }
+                preFile = newFile
+            }
+        }
+    }
+
+    /**
+     * Release resources. This method can be called more than once.
+     *
+     * If the instance is alive as long as the process, it's safe not to close this manually, just let system to release
+     * resources when the process exit. But if you create multiple short live instance, you should close them.
      *
      * @throws IOException Some I/O error occurs
      */
@@ -200,15 +266,18 @@ class LogFile(
      * @throws IOException If some other I/O error occurs
      */
     private fun lockOnFile(): FileLock {
-        if (lockFileChannel == null) {
+        var channel = lockFileChannel
+        // channel closed by system or other programs?
+        if (channel == null || !channel.isOpen) {
             val file = File(lockFilePath)
             if (!file.exists()) {
                 // ignore result, let RandomAccessFile constructor throw exception if fail
                 file.parentFile.mkdirs()
             }
-            lockFileChannel = RandomAccessFile(file, "rw").channel
+            channel = RandomAccessFile(file, "rw").channel
         }
-        return lockFileChannel!!.lock(0, Long.MAX_VALUE, false)
+        lockFileChannel = channel
+        return channel!!.lock(0, Long.MAX_VALUE, false)
     }
 
     private fun getThreadLock(key: String): Lock {
@@ -226,21 +295,19 @@ class LogFile(
     }
 
     /**
-     * Find index range of log files. If no files found, return Pair(-1, -1).
+     * Find index range of log files. If no valid file found, return Pair(-1, -1).
      *
      * @throws IOException If failed to list files
      */
-    private fun findFileIndexRange(archive: Boolean): Pair<Int, Int> {
-        val list = File(directory).listFiles(if (archive) archiveFileFilter else logFileFilter)
-            ?: throw IOException("Unable to list files: $directory")
-
+    private fun findFileIndexRange(fileNameList: Array<String>, baseName: String): Pair<Int, Int> {
         var min = Int.MAX_VALUE
         var max = -1
-        for (file in list) {
-            // FileFilter ensure the file name is valid
-            val index = getFileIndex(file.name, archive)
-            min = Math.min(index, min)
-            max = Math.max(index, max)
+        for (fileName in fileNameList) {
+            if (isValidFileName(fileName, baseName)) {
+                val index = getFileIndex(fileName, baseName)
+                min = Math.min(index, min)
+                max = Math.max(index, max)
+            }
         }
 
         return if (max == -1) {
@@ -263,18 +330,22 @@ class LogFile(
      * @throws IndexOutOfBoundsException If not a valid log or archive file name
      * @throws NumberFormatException If not a valid log or archive file name
      */
-    private fun getFileIndex(fileName: String, archive: Boolean): Int {
-        val baseName = getFileName(if (archive) EXT_ARCHIVE else EXT_LOG)
+    private fun getFileIndex(fileName: String, baseName: String): Int {
         return fileName.substring(baseName.length).toInt()
     }
 
-    private class LogFileFilter(val baseName: String) : FileFilter {
+    /**
+     * Verify if the file is a valid log or archive file.
+     *
+     * @param baseName log or archive base name
+     * @param checkIsFile If true, filter file which is not a normal file (see [File.isFile]), this require I/O operation.
+     */
+    class LogFileFilter(private val baseName: String, private val checkIsFile: Boolean) : FileFilter {
         override fun accept(file: File): Boolean {
-            if (!file.isFile) return false
-            val fileName = file.name
-            if (!fileName.startsWith(baseName)) return false
-            val endStr = fileName.substring(baseName.length)
-            return endStr.matches(LogFile.INDEX_REGEX)
+            if (checkIsFile) {
+                if (!file.isFile) return false
+            }
+            return isValidFileName(file.name, baseName)
         }
     }
 }
