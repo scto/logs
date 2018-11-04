@@ -28,7 +28,7 @@ class FilePrinter(private val logFile: LogFile) : StringPrinter {
         }
 
         try {
-            logFile.write(sb.toString())
+            logFile.write(sb.toString().toByteArray())
         } catch (ex: IOException) {
             // ignore
             ex.printStackTrace()

@@ -26,7 +26,9 @@ import java.util.concurrent.locks.ReentrantLock
  * archiveInstance.close()
  * ```
  *
- * @param directory The directory (absolute path) to save log file
+ * @param directory The directory to save log file. This class relies on the path of [directory] and [name] to ensure
+ *                   thread and process safety, so it's better use absolute path here to prevent conflict, you can use
+ *                   relative path unless you are sure there won't exist conflict.
  * @param name The log name
  * @param maxSize The maximum number of bytes to write to one file.
  *                 If this value is not greater than zero, file size will not be limited.
@@ -97,7 +99,7 @@ class LogFile(
      *
      * @throws IOException Some I/O error occurs
      */
-    fun write(content: String) {
+    fun write(content: ByteArray) {
         // Lock to prevent doing operation concurrently in different thread of current process
         val threadLock = getThreadLock(lockFilePath)
         threadLock.lock()
@@ -116,7 +118,7 @@ class LogFile(
             var headIndex = Math.max(1, Math.max(logRange.second, archiveRange.second + 1))
             var headFile = File(directory, getFileName(EXT_LOG, headIndex))
 
-            if (headFile.length() > maxSize) {
+            if (headFile.length() >= maxSize) {
                 headIndex++
                 headFile = File(directory, getFileName(EXT_LOG, headIndex))
             }
@@ -133,19 +135,19 @@ class LogFile(
             var tmpOpenIndex: Int? = openFileIndex
             var tmpOpenStream: OutputStream? = openFileStream
 
+            // If there's no need to change open index, but the open file has been deleted or moved by another programs,
+            // we can still write content to open stream, no better way to detect this, so just let it happen.
             if (tmpOpenIndex != headIndex || tmpOpenStream == null) {
                 tmpOpenIndex = headIndex
                 tmpOpenStream = BufferedOutputStream(FileOutputStream(headFile, true))
-            }
 
-            tmpOpenStream.write(content.toByteArray())
-            tmpOpenStream.flush()
-
-            if (openFileStream != tmpOpenStream) {
                 openFileStream.catchClose(null)?.printStackTrace()  // ignore error
                 openFileStream = tmpOpenStream
                 openFileIndex = tmpOpenIndex
             }
+
+            tmpOpenStream.write(content)
+            tmpOpenStream.flush()
         } catch (ex: Throwable) {
             exception = ex
             throw ex
@@ -186,7 +188,9 @@ class LogFile(
                 val index = getFileIndex(file.name, getFileName(EXT_LOG))
 
                 val toFile = File(directory, getFileName(EXT_ARCHIVE, index))
-                toFile.delete()
+                if (toFile.exists()) {
+                    toFile.delete()
+                }
                 val result = file.renameTo(toFile)
 
                 if (!result) {
@@ -215,22 +219,24 @@ class LogFile(
      */
     private fun rotate() {
         for (ext in arrayOf(EXT_LOG, EXT_ARCHIVE)) {
-            if (maxCount == 1) {
-                File(directory, getFileName(ext, 1)).delete()
-                continue
-            }
+            var preFile: File? = null
 
-            var preFile = File(directory, getFileName(ext, 1))
-            for (i in 2..maxCount) {
-                val newFile = File(directory, getFileName(ext, i))
+            for (i in 1..maxCount) {
+                val curFile = File(directory, getFileName(ext, i))
 
-                if (newFile.exists()) {
+                if (preFile == null) {
+                    if (curFile.exists()) {
+                        curFile.delete()
+                    }
+                } else {
                     if (preFile.exists()) {
                         preFile.delete()
                     }
-                    newFile.renameTo(preFile)
+                    if (curFile.exists()) {
+                        curFile.renameTo(preFile)
+                    }
                 }
-                preFile = newFile
+                preFile = curFile
             }
         }
     }
@@ -351,9 +357,10 @@ class LogFile(
 }
 
 /**
- * Close this [AutoCloseable]. If [cause] is not null, will return null, but exception which is thrown when closing
- * will be added to [cause] as suppressed exception. If [cause] is null, return null when close without exception,
- * otherwise return the close exception.
+ * Close this [AutoCloseable] and return new exception when close it.
+ *
+ * If [cause] is not null, this method always return null, the closing exception (if exist) will be added to [cause] as suppressed exception.
+ * If [cause] is null, return the closing exception if exist, otherwise return null.
  */
 private fun AutoCloseable?.catchClose(cause: Throwable?): Throwable? = when {
     this == null -> null
