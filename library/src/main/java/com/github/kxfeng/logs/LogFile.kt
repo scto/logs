@@ -4,6 +4,8 @@ import java.io.*
 import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
 import java.nio.channels.OverlappingFileLockException
+import java.nio.file.Files
+import java.nio.file.StandardOpenOption
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.Lock
@@ -61,6 +63,8 @@ class LogFile(
         private const val EXT_LOG = ".log"
         private const val EXT_ARCHIVE = ".bak"
 
+        private val NIO_FULL_SUPPORTED = "java.nio.file.Files".findClass()
+
         private val THREAD_LOCK_MAP: ConcurrentHashMap<String, Lock?> = ConcurrentHashMap()
 
         private val FILE_SORT_COMPARATOR = Comparator<File> { o1, o2 ->
@@ -99,6 +103,7 @@ class LogFile(
      *
      * @throws IOException Some I/O error occurs
      */
+    @Suppress("NewApi")
     fun write(content: ByteArray) {
         // Lock to prevent doing operation concurrently in different thread of current process
         val threadLock = getThreadLock(lockFilePath)
@@ -139,7 +144,19 @@ class LogFile(
             // we can still write content to open stream, no better way to detect this, so just let it happen.
             if (tmpOpenIndex != headIndex || tmpOpenStream == null) {
                 tmpOpenIndex = headIndex
-                tmpOpenStream = BufferedOutputStream(FileOutputStream(headFile, true))
+
+                // In windows, file can't be renamed or deleted when any not closed stream which was opened by FileOutputStream exists.
+                // See [https://bugs.openjdk.java.net/browse/JDK-6357433].
+                tmpOpenStream = if (NIO_FULL_SUPPORTED) {
+                    BufferedOutputStream(
+                        Files.newOutputStream(
+                            headFile.toPath(),
+                            StandardOpenOption.WRITE, StandardOpenOption.APPEND, StandardOpenOption.CREATE
+                        )
+                    )
+                } else {
+                    BufferedOutputStream(FileOutputStream(headFile, true))
+                }
 
                 openFileStream.catchClose(null)?.printStackTrace()  // ignore error
                 openFileStream = tmpOpenStream
@@ -161,6 +178,9 @@ class LogFile(
     /**
      * Archive log files. All new content will be written to new created file after this, so it's safe to delete these archived
      * files, for example after you have uploaded them to server.
+     *
+     * If run on windows system and [NIO_FULL_SUPPORTED] (JAVA 6) is false, when use one LogFile instance to write log, another
+     * instance will fail to call [archive]. If use same instance LogFile to [write] and [archive], there will be no problem.
      *
      * @return All archived files. This array contains newly and previously archived files. Head of the array is the oldest file.
      * @throws IOException Some I/O error occurs
@@ -379,5 +399,17 @@ private fun AutoCloseable?.catchClose(cause: Throwable?): Throwable? = when {
             cause.addSuppressed(closeException)
         }
         null
+    }
+}
+
+/**
+ * Find if class exists
+ */
+private fun String.findClass(): Boolean {
+    return try {
+        Class.forName(this)
+        true
+    } catch (e: ClassNotFoundException) {
+        false
     }
 }
