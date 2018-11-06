@@ -51,11 +51,14 @@ class LogFileTest {
     @Test
     fun testMultiThread() {
         val logName = "test_log_testMultiThread_${System.currentTimeMillis()}"
-        val countDownLatch = CountDownLatch(4)
 
-        for (i in 1..4) {
+        val threadCount = 8
+
+        val countDownLatch = CountDownLatch(threadCount)
+
+        for (i in 1..threadCount) {
             thread(start = true) {
-                val logFile = LogFile(LOG_DIR, logName, 128 * 1024, 5)
+                val logFile = LogFile(LOG_DIR, logName, 128 * 1024, 8)
 
                 for (j in 1..(16 * 1024)) {
                     logFile.write("${i}23456${j % 2}\n".toByteArray())
@@ -66,12 +69,12 @@ class LogFileTest {
             }
         }
 
-        Assert.assertTrue(countDownLatch.await(10, TimeUnit.SECONDS))
+        Assert.assertTrue(countDownLatch.await(2 * threadCount.toLong(), TimeUnit.SECONDS))
 
         val logFile = LogFile(LOG_DIR, logName, 128 * 1024, 5)
         val archiveFiles = logFile.archive()
 
-        Assert.assertEquals(4, archiveFiles.size)
+        Assert.assertEquals(threadCount, archiveFiles.size)
 
         for (file in archiveFiles) {
             val lines = file.readLines()
