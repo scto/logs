@@ -6,43 +6,36 @@ class LogLevel {
         /**
          * Level constant for the println method; use Logger.v.
          */
-        @JvmField
-        val VERBOSE = 0
+        const val VERBOSE = 0
 
         /**
          * Level constant for the println method; use Logger.d.
          */
-        @JvmField
-        val DEBUG = 1
+        const val DEBUG = 1
 
         /**
          * Level constant for the println method; use Logger.i.
          */
-        @JvmField
-        val INFO = 2
+        const val INFO = 2
 
         /**
          * Level constant for the println method; use Logger.w.
          */
-        @JvmField
-        val WARN = 3
+        const val WARN = 3
 
         /**
          * Level constant for the println method; use Logger.e.
          */
-        @JvmField
-        val ERROR = 4
+        const val ERROR = 4
 
         /**
-         * Minimum log level , just a alias for [Int.MIN_VALUE]
+         * Log level for comparison, use this to print all logs.
          */
-        @JvmField
-        val MIN = Int.MIN_VALUE
+        const val ALL = Int.MIN_VALUE
 
         /**
-         * Maximum log level, just a alias for [Int.MAX_VALUE]
+         * Log level for comparison, use this to disable logs.
          */
-        @JvmField
-        val MAX = Int.MAX_VALUE
+        const val NONE = Int.MAX_VALUE
     }
 }

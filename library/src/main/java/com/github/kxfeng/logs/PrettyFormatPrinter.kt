@@ -21,7 +21,7 @@ import java.io.StringWriter
  * └──────────────────────────
  */
 class PrettyFormatPrinter(
-    private val level: Int = LogLevel.VERBOSE,
+    private val level: Int = LogLevel.ALL,
     private val border: Boolean = true,
     private val threadInfo: Boolean = true,
     private val printer: StringPrinter
