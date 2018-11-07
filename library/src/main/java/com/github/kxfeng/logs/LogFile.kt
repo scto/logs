@@ -29,7 +29,7 @@ import java.util.concurrent.locks.ReentrantLock
  * ```
  *
  * @param directory The directory to save log file. This class relies on the path of [directory] and [name] to ensure
- *                   thread and process safety, so it's better use absolute path here to prevent conflict, you can use
+ *                   thread and process safety, so it's better to use absolute path here to prevent conflict, you can use
  *                   relative path unless you are sure there won't exist conflict.
  * @param name The log name
  * @param maxSize The maximum number of bytes to write to one file.
@@ -301,8 +301,8 @@ class LogFile(
                 file.parentFile.mkdirs()
             }
             channel = RandomAccessFile(file, "rw").channel
+            lockFileChannel = channel
         }
-        lockFileChannel = channel
         return channel!!.lock(0, Long.MAX_VALUE, false)
     }
 
