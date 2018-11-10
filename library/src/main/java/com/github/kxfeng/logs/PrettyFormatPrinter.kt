@@ -39,7 +39,7 @@ class PrettyFormatPrinter(
         throwable: Throwable?
     ) {
         val threadTitle = if (threadInfo) "Thread: ${Thread.currentThread().name}" else null
-        val stackText = if (stackTrace == null || stackTrace.isEmpty()) null else getStackTraceString(stackTrace)
+        val stackText = if (stackTrace.isNullOrEmpty()) null else getStackTraceString(stackTrace)
 
         val finalMessage = (message ?: "") +
             (if (message != null && throwable != null) ": " else "") +
