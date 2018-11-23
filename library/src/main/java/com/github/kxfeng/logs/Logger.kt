@@ -20,6 +20,9 @@ class Logger internal constructor() {
     private var defaultTag: String = "Logs"
     private var defaultMethodCount: Int = 0
 
+    /**
+     * Add printers to this logger.
+     */
     fun addPrinters(vararg printers: LoggerPrinter): Logger {
         synchronized(printerList) {
             printerList.addAll(printers)
@@ -28,6 +31,9 @@ class Logger internal constructor() {
         return this
     }
 
+    /**
+     * Clear all printers of this logger.
+     */
     fun clearPrinters(): Logger {
         synchronized(printerList) {
             printerList.clear()
@@ -37,21 +43,37 @@ class Logger internal constructor() {
     }
 
     /**
+     * Initialize default tag and method count.
+     *
      * [tag] default tag for all log
      * [methodCount] default method stack trace count: -1 for as many as possible, 0 for none.
      */
-    fun defaultConfig(tag: String, methodCount: Int): Logger {
+    fun init(tag: String, methodCount: Int): Logger {
         defaultTag = tag
         defaultMethodCount = methodCount
         return this
     }
 
-    fun tag(tag: String): Logger {
+    /**
+     * Set temporary tag for next log
+     */
+    fun tmp(tag: String): Logger {
         localTag.set(tag)
         return this
     }
 
-    fun config(tag: String, methodCount: Int): Logger {
+    /**
+     * Set temporary method count for next log.
+     */
+    fun tmp(methodCount: Int): Logger {
+        localMethodCount.set(methodCount)
+        return this
+    }
+
+    /**
+     * Set temporary tag and method count for next log.
+     */
+    fun tmp(tag: String, methodCount: Int): Logger {
         localTag.set(tag)
         localMethodCount.set(methodCount)
         return this

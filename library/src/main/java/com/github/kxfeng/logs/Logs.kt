@@ -9,11 +9,17 @@ class Logs {
     companion object {
         private val global: Logger by lazy { Logger() }
 
+        /**
+         * The global Logs as a instance.
+         */
         @JvmStatic
         fun asInstance(): Logger {
             return global
         }
 
+        /**
+         * Create a new logger instance.
+         */
         @JvmStatic
         fun newInstance(): Logger {
             return Logger()
@@ -30,18 +36,22 @@ class Logs {
         }
 
         @JvmStatic
-        fun defaultConfig(tag: String, methodCount: Int): Logger {
-            return global.defaultConfig(tag, methodCount)
+        fun init(tag: String, methodCount: Int): Logger {
+            return global.init(tag, methodCount)
         }
 
         @JvmStatic
-        fun tag(tag: String): Logger {
-            return global.tag(tag)
+        fun tmp(tag: String): Logger {
+            return global.tmp(tag)
+        }
+
+        fun tmp(methodCount: Int): Logger {
+            return global.tmp(methodCount)
         }
 
         @JvmStatic
-        fun config(tag: String, stackCount: Int): Logger {
-            return global.config(tag, stackCount)
+        fun tmp(tag: String, methodCount: Int): Logger {
+            return global.tmp(tag, methodCount)
         }
 
         @JvmStatic

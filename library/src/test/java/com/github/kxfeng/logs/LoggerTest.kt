@@ -10,7 +10,7 @@ class LoggerTest {
     fun testDefaultConfig() {
         var callCount = 0
 
-        Logs.defaultConfig("TAG1", 0)
+        Logs.init("TAG1", 0)
         Logs.clearPrinters()
         Logs.addPrinters(object : LoggerPrinter {
             override fun isLoggable(level: Int, tag: String): Boolean {
@@ -48,7 +48,7 @@ class LoggerTest {
         Logs.i("Test")
         Assert.assertEquals(1, callCount)
 
-        Logs.defaultConfig("TAG2", 2)
+        Logs.init("TAG2", 2)
         Logs.w(IOException())
 
         Assert.assertEquals(2, callCount)
@@ -58,7 +58,7 @@ class LoggerTest {
     fun testChangeConfig() {
         var callCount = 0
 
-        Logs.defaultConfig("TAG", 0)
+        Logs.init("TAG", 0)
         Logs.clearPrinters()
         Logs.addPrinters(object : LoggerPrinter {
             override fun isLoggable(level: Int, tag: String): Boolean {
@@ -78,14 +78,14 @@ class LoggerTest {
             }
         })
 
-        Logs.config("TAG1", 3).d("Test")
+        Logs.tmp("TAG1", 3).d("Test")
     }
 
     @Test
     fun testMessageFormat() {
         var callCount = 0
 
-        Logs.defaultConfig("TAG", 0)
+        Logs.init("TAG", 0)
         Logs.clearPrinters()
         Logs.addPrinters(object : LoggerPrinter {
             override fun isLoggable(level: Int, tag: String): Boolean {
@@ -130,7 +130,7 @@ class LoggerTest {
     fun testSupplierCalledOnce() {
         var callCount = 0
 
-        Logs.defaultConfig("TAG", 0)
+        Logs.init("TAG", 0)
         Logs.clearPrinters()
         Logs.addPrinters(
             object : LoggerPrinter {
@@ -184,7 +184,7 @@ class LoggerTest {
     fun testSupplierNotCalled() {
         var callCount = 0
 
-        Logs.defaultConfig("TAG", 0)
+        Logs.init("TAG", 0)
         Logs.clearPrinters()
         Logs.addPrinters(
             object : LoggerPrinter {
