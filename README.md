@@ -9,43 +9,54 @@ Download
 repositories {
     jcenter()
 }
-
 dependencies {
-    implementation 'com.github.kxfeng:logs:1.0.0'
+    implementation 'com.github.kxfeng:logs:1.1.0'
 }
 ```
 
 Initialize
 ```kotlin
-Logs.defaultConfig("MyApp", 2)
+Logs.init("MyApp", 2)
     .addPrinters(
         PrettyFormatPrinter(
             level = LogLevel.VERBOSE,
             border = true,
             threadInfo = true,
             printer = AndroidPrinter()
-            
         )
     )
 ```
 
 Then use
 ```kotlin
-Logs.d("hello")
+Logs.d("Hello")
+Logs.e(NullPointerException(),"Error")
 ```
 
-## Parameterized log and lambda
+Output
+
+![](https://github.com/kxfeng/logs/blob/master/images/logs_output.png)
+
+## Lambda parameter
 
 ```kotlin
-Logs.d("time: %s %s", System.currentTimeMillis(), "ms")
 Logs.d("time: %s %s", Supplier { System.currentTimeMillis() }, "ms")
 ```
 
-## Temporary config
+## Temporary config 
 
 ```kotlin
-Logs.tag("Crash").e("Crash error")
-Logs.config("Crash", 10).e("Crash error")
+Logs.tmp("TAG", 10).e("Crash")
+```
+
+## Logger instance
+
+```kotlin
+val logger1 = Logs.asInstance()
+val logger2 = Logs.newInstance()
+
+logger1.d("Hello")
+logger2.d("Hello")
 ```
 
 ## Log to file
@@ -54,7 +65,7 @@ Logs.config("Crash", 10).e("Crash error")
 
 Initialize printer
 ```kotlin
-Logs.config("MyApp", 0)
+Logs.init("MyApp", 0)
     .addPrinters(
         PrettyFormatPrinter(
             level = LogLevel.VERBOSE,
