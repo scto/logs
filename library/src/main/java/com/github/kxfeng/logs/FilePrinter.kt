@@ -74,6 +74,7 @@ class FilePrinter(private val logFile: LogFile) : StringPrinter {
                     printer.printInWorker(logItem.level, logItem.tag, logItem.message)
                 } while (true)
             } catch (ex: InterruptedException) {
+                Thread.currentThread().interrupt()
                 synchronized(this) {
                     started = false
                 }
