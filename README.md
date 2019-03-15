@@ -1,6 +1,6 @@
 # Logs
 
-A simble, pretty and flexible log library for android.
+A simple, pretty and flexible log library for Android.
 
 ## Setup
 
@@ -16,7 +16,7 @@ dependencies {
 
 Initialize
 ```kotlin
-Logs.init("MyApp", 2)
+Logs.init("TAG", 0)
     .addPrinters(
         PrettyFormatPrinter(
             level = LogLevel.VERBOSE,
@@ -46,7 +46,7 @@ Logs.d("time: %s %s", Supplier { System.currentTimeMillis() }, "ms")
 ## Temporary config 
 
 ```kotlin
-Logs.tmp("TAG", 10).e("Crash")
+Logs.tmp("TAG2", 10).e("Error")
 ```
 
 ## Logger instance
@@ -65,7 +65,7 @@ logger2.d("Hello")
 
 Initialize printer
 ```kotlin
-Logs.init("MyApp", 0)
+Logs.init("TAG", 0)
     .addPrinters(
         PrettyFormatPrinter(
             level = LogLevel.VERBOSE,
