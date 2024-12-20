@@ -1,0 +1,86 @@
+name: Build and test
+
+on:
+  push:
+    branches: [ "dev", "main" ]
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    branches: [ "dev" ]
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch: { }
+
+env:
+  # Misc
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Publishing credentials
+  # Build configuration
+  BUILD_JAVA_VERSION: '17'
+  BUILD_JAVA_DIST: 'temurin'
+  BUILD_IS_RELEASE: ${{ github.ref == 'refs/heads/main'  }}
+
+  DEBUG_INFO_PATH: '**/build/debug-symbols/**/*.debug_info'
+
+  # APT
+  ATS_SUDO: sudo
+  ATS_APT_UPDATE: apt-get update
+  ATS_APT_UPGRADE: apt-get upgrade -y
+  ATS_APT_INSTALL: apt-get install
+  ATS_APT_DEPS: build-essential cargo nodejs cmake ninja-build
+
+jobs:
+  build_debug_apk:
+    name: Build Debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel previous runs
+        uses: styfle/cancel-workflow-action@0.12.1
+        with:
+          access_token: ${{ github.token }}
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.BUILD_JAVA_VERSION }}
+          distribution: ${{ env.BUILD_JAVA_DIST }}
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r25
+      - name: Install dependencies
+        run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_UPGRADE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
+      - name: Install Node packages
+        run: |
+          cd grammars/cpp && npm install && cd -
+      - name: Restore cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+      - name: Change Gradle wrapper permissions
+        run: chmod +x ./gradlew
+      - name: Assemble Debug
+        run: ./gradlew assembleDebug generateDebugSymbolsDebug --parallel --stacktrace
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Upload debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-symbols
+          path: ${{ env.DEBUG_INFO_PATH }}
